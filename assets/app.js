@@ -383,6 +383,7 @@ import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.j
 var WarehouseScene = class {
   constructor(container, simulation2) {
     __publicField(this, "onSelect");
+    __publicField(this, "onUserControl");
     __publicField(this, "container");
     __publicField(this, "simulation");
     __publicField(this, "scene", new THREE.Scene());
@@ -397,6 +398,7 @@ var WarehouseScene = class {
     __publicField(this, "frame", 0);
     __publicField(this, "clock", new THREE.Clock());
     __publicField(this, "activeView", "overview");
+    __publicField(this, "cameraTransitioning", false);
     __publicField(this, "cameraDestination", new THREE.Vector3(33, 31, 35));
     __publicField(this, "targetDestination", new THREE.Vector3(0, 1.5, 0));
     __publicField(this, "routeLine");
@@ -415,11 +417,22 @@ var WarehouseScene = class {
           this.targetDestination.set(robot.x, 1.65, robot.z);
         }
       }
-      const cameraBlend = 1 - Math.exp(-delta * 3.4);
-      this.camera.position.lerp(this.cameraDestination, cameraBlend);
-      this.controls.target.lerp(this.targetDestination, cameraBlend);
+      const shouldMoveCamera = this.cameraTransitioning || this.activeView === "robot" && this.simulation.state.autoCamera;
+      if (shouldMoveCamera) {
+        const cameraBlend = 1 - Math.exp(-delta * 3.4);
+        this.camera.position.lerp(this.cameraDestination, cameraBlend);
+        this.controls.target.lerp(this.targetDestination, cameraBlend);
+        if (this.activeView !== "robot" && this.camera.position.distanceTo(this.cameraDestination) < 0.015) {
+          this.cameraTransitioning = false;
+        }
+      }
       this.controls.update();
       this.renderer.render(this.scene, this.camera);
+    });
+    __publicField(this, "handleControlStart", () => {
+      this.cameraTransitioning = false;
+      if (this.activeView === "robot") this.activeView = "free";
+      this.onUserControl?.();
     });
     __publicField(this, "handleClick", (event) => {
       const rect = this.renderer.domElement.getBoundingClientRect();
@@ -447,9 +460,17 @@ var WarehouseScene = class {
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.075;
-    this.controls.minDistance = 5;
-    this.controls.maxDistance = 85;
-    this.controls.maxPolarAngle = Math.PI * 0.485;
+    this.controls.enableRotate = true;
+    this.controls.enableZoom = true;
+    this.controls.enablePan = true;
+    this.controls.screenSpacePanning = true;
+    this.controls.zoomToCursor = true;
+    this.controls.rotateSpeed = 0.7;
+    this.controls.panSpeed = 0.85;
+    this.controls.minDistance = 2.5;
+    this.controls.maxDistance = 100;
+    this.controls.maxPolarAngle = Math.PI * 0.495;
+    this.controls.addEventListener("start", this.handleControlStart);
     this.controls.target.copy(this.targetDestination);
     this.camera.position.copy(this.cameraDestination);
     this.floorMaterial = new THREE.MeshStandardMaterial({ color: "#b8c2c5", roughness: 0.92, metalness: 0.02 });
@@ -467,6 +488,7 @@ var WarehouseScene = class {
   }
   setView(view) {
     this.activeView = view;
+    this.cameraTransitioning = true;
     const positions = {
       overview: { position: [33, 31, 35], target: [0, 1.5, 0] },
       inbound: { position: [28, 11, 18], target: [14, 1.6, 7.2] },
@@ -486,6 +508,7 @@ var WarehouseScene = class {
     cancelAnimationFrame(this.frame);
     this.resizeObserver.disconnect();
     this.renderer.domElement.removeEventListener("click", this.handleClick);
+    this.controls.removeEventListener("start", this.handleControlStart);
     this.controls.dispose();
     this.scene.traverse((object) => {
       if (object instanceof THREE.Mesh || object instanceof THREE.Line || object instanceof THREE.Sprite) {
@@ -1471,6 +1494,9 @@ var WarehouseViewport = defineComponent({
     onMounted(() => {
       if (!viewport.value) return;
       scene = new WarehouseScene(viewport.value, simulation);
+      scene.onUserControl = () => {
+        currentView.value = "free";
+      };
       scene.onSelect = (type, id) => {
         const task = type === "robot" ? state.tasks.find((item) => item.robotId === id && item.phase !== "\u5DF2\u5B8C\u6210") : state.tasks.find((item) => item.workstationId === id && item.phase !== "\u5DF2\u5B8C\u6210");
         if (task) simulation.selectOrder(task.orderId);
@@ -1490,7 +1516,7 @@ var WarehouseViewport = defineComponent({
       <div class="simulation-badge">SIMULATION</div>
       <div v-if="selectedRobot" class="robot-focus-card glass-panel"><div class="focus-card-top"><span>{{ selectedRobot.id }}</span><span class="status-online">{{ selectedRobot.status }}</span></div><strong>{{ selectedTask?.phase }}</strong><div class="focus-data"><span>\u8D27\u4F4D <b>{{ selectedTask?.locationCode }}</b></span><span>\u7535\u91CF <b>{{ selectedRobot.battery.toFixed(0) }}%</b></span><span>\u8F7D\u8377 <b>{{ selectedRobot.loadedTote||'\u7A7A\u8F7D' }}</b></span></div></div>
       <div class="scene-legend glass-panel"><span><i class="legend-robot"/>CTU \u673A\u5668\u4EBA</span><span><i class="legend-route"/>\u6267\u884C\u8DEF\u5F84</span><span><i class="legend-station"/>\u62E3\u9009\u5DE5\u4F4D</span></div>
-      <div class="scene-help"><MousePointer2 :size="13"/>\u62D6\u62FD\u65CB\u8F6C \xB7 \u6EDA\u8F6E\u7F29\u653E \xB7 \u70B9\u51FB\u8BBE\u5907\u8054\u52A8</div>
+      <div class="scene-help"><MousePointer2 :size="13"/>\u5DE6\u952E\u65CB\u8F6C \xB7 \u6EDA\u8F6E\u7F29\u653E \xB7 \u53F3\u952E\u5E73\u79FB</div>
     </section>`
 });
 var App = defineComponent({
